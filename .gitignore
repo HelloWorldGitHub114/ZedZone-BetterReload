@@ -1,0 +1,7 @@
+src/bin/
+src/obj/
+content/
+.vs/
+*.user
+*.suo
+*.log
