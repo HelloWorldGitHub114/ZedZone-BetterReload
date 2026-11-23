@@ -1,9 +1,33 @@
 param(
-    [string]$GameDir = "E:\SteamLibrary\steamapps\common\ZED ZONE",
+    [string]$GameDir = "",
     [switch]$Install
 )
 
 $ErrorActionPreference = "Stop"
+
+if ([string]::IsNullOrWhiteSpace($GameDir)) {
+    $candidates = @(
+        "C:\Program Files (x86)\Steam\steamapps\common\ZED ZONE",
+        "D:\SteamLibrary\steamapps\common\ZED ZONE",
+        "E:\SteamLibrary\steamapps\common\ZED ZONE",
+        "F:\SteamLibrary\steamapps\common\ZED ZONE"
+    )
+    $steamPath = (Get-ItemProperty -Path "HKCU:\Software\Valve\Steam" -Name SteamPath -ErrorAction SilentlyContinue).SteamPath
+    if ($steamPath) {
+        $libVdf = Join-Path $steamPath "steamapps\libraryfolders.vdf"
+        if (Test-Path $libVdf) {
+            foreach ($m in [regex]::Matches((Get-Content $libVdf -Raw), '"path"\s+"([^"]+)"')) {
+                $p = $m.Groups[1].Value -replace '\\\\', '\'
+                $candidates = @((Join-Path $p "steamapps\common\ZED ZONE")) + $candidates
+            }
+        }
+    }
+    $GameDir = $candidates | Where-Object { Test-Path (Join-Path $_ "BepInEx\interop\Assembly-CSharp.dll") } | Select-Object -First 1
+    if (-not $GameDir) {
+        throw "Could not auto-detect ZED ZONE with BepInEx interop. Pass -GameDir '<path>'."
+    }
+}
+
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $proj = Join-Path $repoRoot "src\BetterReload.csproj"
 
@@ -31,6 +55,6 @@ if ($Install) {
     }
     $gameModsDir = Join-Path $GameDir "Mods\BetterReload"
     New-Item -ItemType Directory -Force -Path $gameModsDir | Out-Null
-    Copy-Item -LiteralPath (Join-Path $stageDir "*") -Destination $gameModsDir -Force
+    Get-ChildItem -LiteralPath $stageDir | Copy-Item -Destination $gameModsDir -Recurse -Force
     Write-Host "Installed to game -> $gameModsDir" -ForegroundColor Cyan
 }

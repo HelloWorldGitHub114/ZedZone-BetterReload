@@ -15,7 +15,7 @@ An all-in-one reload QoL suite for ZED ZONE featuring hotkey magazine refilling 
   2. 其次装填适配**武器栏其它已装备枪械**的未满弹匣；
   3. 最后装填背包内**其它任意型号**的未满弹匣（可在配置中关闭）。
 - **自动连压与原生打断**：默认开启 `AutoContinue`，一个弹匣压满后自动无缝接续下一个未满弹匣；压弹途中按原版取消键（`F`）中断动作时也会自动停止连压。
-- **多层套包全兼容**：递归扫描主背包、穿戴装备容器与多层子背包内的弹匣和子弹，通过对象指针去重，与 **Nested Inventory Fix** 同装时不会重复计数或双扣子弹；未安装套包修复模组时也自带弹药取用与空堆清理兜底。
+- **多层套包全兼容**：递归扫描主背包、穿戴装备容器与多层子背包内的弹匣和子弹，通过对象指针去重，推荐搭配同系列 [《更好的套包 / Better Nested Bags》](https://steamcommunity.com/sharedfiles/filedetails/?id=3843482219) 无缝使用；单独安装本模组时也自带弹药取用与空堆清理兜底。
 - **双语轻量提示**：缺对应子弹或无未满弹匣时，按游戏当前语言显示简短右下角提示。
 
 ### 2. 打空自动换弹 / Auto-Reload on Empty
@@ -25,6 +25,12 @@ An all-in-one reload QoL suite for ZED ZONE featuring hotkey magazine refilling 
 ### 3. 套包弹匣原位归回 / Nested Vacated-Slot Return
 - **修补原版套包识别盲区**：游戏原版换弹时已有“优先将换出的旧弹匣放回新弹匣腾出的原格位，放不下再退回原容器或通用背包”的机制，但角色容器归属校验未识别嵌套子背包（弹匣袋/套包里的包），导致子背包里的弹匣每次换弹都会被扔到外层大背包里把包搞乱。
 - **开启后效果**：多层套包中的弹匣或电池在换弹后，会按“原格位 → 旋转后原格位 → 同子背包其它空位 → 其它背包兜底”的规则优先回到原处（仅当旧弹匣尺寸更大且周围塞不下时才退回外层）。
+
+### 4. 右下角 HUD 备弹计入弹匣内子弹 / HUD Reserve Ammo Includes Spare Magazines (v1.1.0)
+- **修复备弹误报 0 发**：游戏原版右下角 HUD 备弹数字只统计背包里的散装子弹，不统计随身备用弹匣里已经压好的子弹（经常出现兜里揣着好几个满弹匣、右下角却显示 `0` 备弹的误导）。
+- **智能兼容统计**：开启后自动递归统计随身（含多层套包）所有适配当前枪械的备用弹匣内子弹数，支持在配置中切换两种展示格式：
+  - `Combined`（默认）：合并显示总备弹（例如 `150` 或 `30/150`），简洁贴合原版排版；
+  - `Split`：分开显示散弹与弹匣内子弹（例如 `60+90` 或 `30/60+90`）。
 
 ---
 
@@ -61,6 +67,8 @@ BepInEx\config\zedzone.betterreload.cfg
 | `AutoReload` | `AutoReloadOnEmpty` | `true` | 打空最后一发或空仓点击开火时自动触发换弹 |
 | `AutoReload` | `AutoReloadDelay` | `0.15` | 打空最后一发后延迟几秒开始自动换弹（`0 ~ 2` 秒） |
 | `MagazineReturn` | `ReturnToNestedOriginalSlot` | `true` | 换弹时让多层套包里的弹匣/电池也能优先放回原容器与原格位 |
+| `HudDisplay` | `IncludeMagazineAmmoInHud` | `true` | 右下角 HUD 备弹数量中计入随身兼容备用弹匣内的子弹数 |
+| `HudDisplay` | `HudMagazineAmmoStyle` | `Combined` | HUD 备弹显示格式：`Combined`（总备弹如 `150`）或 `Split`（散弹+弹匣如 `60+90`） |
 
 > **改键示例**：如果想改成鼠标侧键单键压弹，把 `ModifierKey = None`，`TriggerKey = Mouse3`（或 `Mouse4`），保存配置后重启游戏生效。
 
@@ -82,7 +90,7 @@ BepInEx\config\zedzone.betterreload.cfg
 需安装 `.NET 6+ SDK`，且游戏目录已安装 `ZedModsLoader`（BepInEx 6 IL2CPP）并运行过一次以生成 `BepInEx\interop\`：
 
 ```powershell
-dotnet build src\BetterReload.csproj -c Release -p:ZedZoneDir="E:\SteamLibrary\steamapps\common\ZED ZONE"
+dotnet build src\BetterReload.csproj -c Release -p:ZedZoneDir="<你的 ZED ZONE 安装路径>"
 # 或使用打包脚本：
 powershell -ExecutionPolicy Bypass -File build.ps1          # 仅构建并输出到 content\BetterReload
 powershell -ExecutionPolicy Bypass -File build.ps1 -Install # 构建并安装到游戏 Mods\BetterReload

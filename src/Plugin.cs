@@ -11,15 +11,21 @@ using UnityEngine;
 
 namespace ZedZone.BetterReload
 {
+    public enum HudReserveAmmoStyle
+    {
+        Combined,
+        Split
+    }
+
     /// <summary>
-    /// 换弹增强插件入口：提供快捷键一键压弹、打空自动换弹与多层套包弹匣原位归回。
+    /// 换弹增强插件入口：提供快捷键一键压弹、打空自动换弹、多层套包弹匣原位归回与 HUD 弹匣备弹统计。
     /// </summary>
     [BepInPlugin(PluginGuid, PluginName, PluginVersion)]
     public class Plugin : BasePlugin
     {
         public const string PluginGuid = "zedzone.betterreload";
         public const string PluginName = "Better Reload";
-        public const string PluginVersion = "1.0.0";
+        public const string PluginVersion = "1.1.0";
 
         internal static ManualLogSource Logs;
 
@@ -39,6 +45,9 @@ namespace ZedZone.BetterReload
         internal static ConfigEntry<float> AutoReloadDelay;
 
         internal static ConfigEntry<bool> ReturnToNestedOriginalSlot;
+
+        internal static ConfigEntry<bool> IncludeMagazineAmmoInHud;
+        internal static ConfigEntry<HudReserveAmmoStyle> HudMagazineAmmoStyle;
 
         private static readonly HashSet<string> LoggedErrorTags = new HashSet<string>(StringComparer.Ordinal);
 
@@ -65,7 +74,7 @@ namespace ZedZone.BetterReload
             PreferEmptiestFirst = Config.Bind("Behavior", "PreferEmptiestFirst", true,
                 "同优先级下优先装填剩余子弹最少的弹匣；关闭则优先补满最接近满弹的弹匣。");
             EnableNestedAmmoFallback = Config.Bind("Behavior", "EnableNestedAmmoFallback", true,
-                "启用套包弹药兜底（当未安装 NestedInventoryFix 时也能从多层子背包取弹并清理空堆）。");
+                "启用套包弹药兜底（单独安装本模组时也能从多层子背包取弹并清理空堆，与《更好的套包》自动去重兼容）。");
 
             AutoReloadOnEmpty = Config.Bind("AutoReload", "AutoReloadOnEmpty", true,
                 "打空最后一发或空仓点击开火时自动触发换弹（跳过弓箭与卡壳状态）。");
@@ -74,6 +83,11 @@ namespace ZedZone.BetterReload
 
             ReturnToNestedOriginalSlot = Config.Bind("MagazineReturn", "ReturnToNestedOriginalSlot", true,
                 "换弹时让多层套包内的弹匣/电池也能优先放回被换走物品的原容器与原格位，放不下时自动回退原版规则。");
+
+            IncludeMagazineAmmoInHud = Config.Bind("HudDisplay", "IncludeMagazineAmmoInHud", true,
+                "在右下角武器 HUD 备弹数量中计入随身兼容弹匣（含套包内弹匣）已装填的子弹数。");
+            HudMagazineAmmoStyle = Config.Bind("HudDisplay", "HudMagazineAmmoStyle", HudReserveAmmoStyle.Combined,
+                "HUD 备弹显示格式：Combined 合并显示总备弹（如 150 或 30/150）；Split 分开显示散弹+弹匣内子弹（如 60+90 或 30/60+90）。");
 
             if (!Enabled.Value)
             {
@@ -99,6 +113,7 @@ namespace ZedZone.BetterReload
                 typeof(Patch_BasicCharacterController_FindOwnerInventoryData_Nested),
                 typeof(Patch_BasicCharacterController_IsCharacterOwnedInventory_Nested),
                 typeof(Patch_HumanCharacterController_OnMouseDown_AutoReload),
+                typeof(Patch_RangedWeaponInfoPanel_RefreshInventoryBullet),
             };
 
             foreach (var patchType in patchTypes)

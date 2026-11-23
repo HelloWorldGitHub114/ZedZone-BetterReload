@@ -5,7 +5,7 @@ using Il2CppInterop.Runtime.InteropTypes;
 namespace ZedZone.BetterReload
 {
     /// <summary>
-    /// 携带容器递归与多层套包弹药兜底工具，使用对象指针去重以保证与 NestedInventoryFix 无缝共存。
+    /// 携带容器递归与多层套包弹药/弹匣统计工具，使用对象指针去重以保证与《更好的套包》无缝共存。
     /// </summary>
     internal static class NestedAmmoHelper
     {
@@ -182,6 +182,48 @@ namespace ZedZone.BetterReload
         {
             var owner = FindOwnerInventoryRecursive(characterData, target);
             return owner != null && owner.RemoveItem(target, executeOnChange);
+        }
+
+        /// <summary>
+        /// 统计角色所有随身容器（含多层套包）中兼容指定武器的备用弹匣内已装填的子弹总数（按指针去重）。
+        /// </summary>
+        internal static int CountCompatibleMagazineAmmo(BasicCharacterController character, ItemAttr_RangedWeapon weaponAttr)
+        {
+            if (character == null || character.characterData == null || weaponAttr == null)
+                return 0;
+
+            var itemMgr = ItemManager.instance;
+            if (itemMgr == null) return 0;
+
+            int total = 0;
+            var seen = new HashSet<IntPtr>();
+            var inventories = CollectCarriedInventories(character.characterData);
+            for (int i = 0; i < inventories.Count; i++)
+            {
+                var items = inventories[i]?.itemList;
+                if (items == null) continue;
+
+                for (int j = 0; j < items.Count; j++)
+                {
+                    var item = items[j];
+                    if (item == null) continue;
+
+                    IntPtr ptr = Key(item);
+                    if (ptr == IntPtr.Zero || !seen.Add(ptr)) continue;
+
+                    var attr = itemMgr.GetItemAttrById(item.itemId);
+                    if (attr == null || attr.itemType != ItemType.Magazine) continue;
+
+                    var magAttr = attr.TryCast<ItemAttr_Magazine>();
+                    if (magAttr == null || !magAttr.IsMagazineFit(weaponAttr)) continue;
+
+                    int loaded = ItemData.GetMagazineAmmoNumber(item);
+                    if (loaded > 0)
+                        total += loaded;
+                }
+            }
+
+            return total;
         }
 
         /// <summary>

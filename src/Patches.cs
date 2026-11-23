@@ -1,5 +1,6 @@
 using System;
 using HarmonyLib;
+using UnityEngine;
 
 namespace ZedZone.BetterReload
 {
@@ -238,6 +239,77 @@ namespace ZedZone.BetterReload
             catch (Exception ex)
             {
                 Plugin.LogOnce("mouse-down-postfix", ex);
+            }
+        }
+    }
+
+    /// <summary>
+    /// 修正右下角 HUD 备弹数量只统计散弹不计入备用弹匣内子弹的问题。
+    /// </summary>
+    [HarmonyPatch(typeof(RangedWeaponInfoPanel), nameof(RangedWeaponInfoPanel.RefreshInventoryBullet))]
+    internal static class Patch_RangedWeaponInfoPanel_RefreshInventoryBullet
+    {
+        [HarmonyPostfix]
+        private static void Postfix(RangedWeaponInfoPanel __instance)
+        {
+            if (Plugin.IncludeMagazineAmmoInHud == null || !Plugin.IncludeMagazineAmmoInHud.Value)
+                return;
+
+            try
+            {
+                if (__instance == null || __instance.weapon == null || __instance.gunAmmoText == null)
+                    return;
+
+                var weapon = __instance.weapon;
+                var attr = weapon.weaponAttr;
+                if (attr == null || weapon.character == null || weapon.weaponData == null)
+                    return;
+
+                // 跳过弓箭、弩、能量与液体武器（它们不走 gunAmmoText 弹匣体系）
+                var wt = attr.weaponType;
+                if (wt == RangedWeaponType.Bow ||
+                    wt == RangedWeaponType.Crossbow ||
+                    wt == RangedWeaponType.EnergyWeapon ||
+                    wt == RangedWeaponType.LiquidWeapon)
+                    return;
+
+                int magAmmo = NestedAmmoHelper.CountCompatibleMagazineAmmo(weapon.character, attr);
+                if (magAmmo <= 0)
+                    return;
+
+                int looseAmmo = BasicRangedWeapon.GetInventoryAmmoTotal(
+                    weapon.character,
+                    weapon.weaponData,
+                    weapon.assignArrowId);
+
+                var style = Plugin.HudMagazineAmmoStyle != null
+                    ? Plugin.HudMagazineAmmoStyle.Value
+                    : HudReserveAmmoStyle.Combined;
+
+                string reserveText;
+                if (style == HudReserveAmmoStyle.Split)
+                {
+                    reserveText = $"{looseAmmo}+{magAmmo}";
+                    __instance.gunAmmoText.horizontalOverflow = HorizontalWrapMode.Overflow;
+                }
+                else
+                {
+                    reserveText = (looseAmmo + magAmmo).ToString();
+                }
+
+                if (__instance.ShowLoadedAmmoInText())
+                {
+                    int loaded = BasicRangedWeapon.GetLoadedAmmo(weapon.weaponData);
+                    __instance.gunAmmoText.text = $"{loaded}/{reserveText}";
+                }
+                else
+                {
+                    __instance.gunAmmoText.text = reserveText;
+                }
+            }
+            catch (Exception ex)
+            {
+                Plugin.LogOnce("hud-mag-ammo", ex);
             }
         }
     }
