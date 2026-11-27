@@ -70,7 +70,14 @@ BepInEx\config\zedzone.betterreload.cfg
 | `HudDisplay` | `IncludeMagazineAmmoInHud` | `true` | 右下角 HUD 备弹数量中计入随身兼容备用弹匣内的子弹数 |
 | `HudDisplay` | `HudMagazineAmmoStyle` | `Combined` | HUD 备弹显示格式：`Combined`（总备弹如 `150`）或 `Split`（散弹+弹匣如 `60+90`） |
 
-> **改键示例**：如果想改成鼠标侧键单键压弹，把 `ModifierKey = None`，`TriggerKey = Mouse3`（或 `Mouse4`），保存配置后重启游戏生效。
+> **如果按 `Alt + R` 无反应（常见显卡热键冲突）**：部分开启了游戏内覆盖层的 N 卡（NVIDIA App / GeForce Experience）或 A 卡（AMD Software）用户，显卡驱动默认会将 `Alt + R` 占为全局性能监控热键并拦截按键，任选其一即可解决：
+> 1. **关闭显卡 `Alt + R` 热键**（推荐继续用 `Alt + R`）：N 卡按 `Alt + Z → 设置 → 键盘快捷键 → 性能`，关闭或修改 `Alt + R`（A 卡在 AMD 覆盖层快捷键中同理关闭或改键）。
+> 2. **在配置文件中自定义按键**（支持纯单键或任意组合键，推荐改成原版未占用的单键 `N` 或鼠标侧键 `Mouse3` / `Mouse4`）：打开 `BepInEx\config\zedzone.betterreload.cfg`，在 `[Hotkey]` 节修改后保存并重启游戏：
+> ```ini
+> TriggerKey = N        # 或 Mouse3 / Mouse4（对应鼠标两个侧键）
+> ModifierKey = None    # 设为 None 即纯单键触发；也可填入其它修饰键组合
+> ```
+> 此外，本模组使用标准 BepInEx `Config.Bind` 注册配置，若已安装 BepInEx 配置界面类模组（如 ConfigurationManager），也可直接在游戏内可视化修改全部选项。
 
 ---
 
