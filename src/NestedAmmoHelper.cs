@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Il2CppInterop.Runtime.InteropTypes;
+using NativeInventoryList = Il2CppSystem.Collections.Generic.List<InventoryData>;
 
 namespace ZedZone.BetterReload
 {
@@ -10,6 +11,25 @@ namespace ZedZone.BetterReload
     internal static class NestedAmmoHelper
     {
         private const int MaxNestDepth = 12;
+        private const int MaxMagazineFits = 2048;
+
+        // 只缓存物品定义的判断结果。库存、弹量和 IL2CPP 对象仍以本次调用为准。
+        private static IntPtr _itemManagerPtr;
+        private static readonly Dictionary<int, bool> _ammoIdCache = new Dictionary<int, bool>();
+        private static readonly Dictionary<int, bool> _magazineIdCache = new Dictionary<int, bool>();
+        private static readonly Dictionary<(int magItemId, IntPtr weaponAttrPtr), bool> _magFitCache =
+            new Dictionary<(int magItemId, IntPtr weaponAttrPtr), bool>();
+
+        private sealed class InventoryScratch
+        {
+            internal readonly List<InventoryData> Inventories = new List<InventoryData>();
+            internal readonly HashSet<IntPtr> Visited = new HashSet<IntPtr>();
+            internal readonly HashSet<IntPtr> Seen = new HashSet<IntPtr>();
+            internal bool InUse;
+        }
+
+        [ThreadStatic]
+        private static InventoryScratch _scratch;
 
         internal static IntPtr Key(Il2CppObjectBase obj)
         {
@@ -22,32 +42,35 @@ namespace ZedZone.BetterReload
         internal static List<InventoryData> CollectCarriedInventories(CharacterData characterData)
         {
             var result = new List<InventoryData>();
-            if (characterData == null) return result;
+            if (characterData != null)
+                CollectCarriedInventories(GetCarriedList(characterData), characterData, result, new HashSet<IntPtr>());
+            return result;
+        }
 
-            var visited = new HashSet<IntPtr>();
-
-            try
-            {
-                var carried = characterData.GetCarriedInventoryList();
-                if (carried != null)
-                {
-                    for (int i = 0; i < carried.Count; i++)
-                    {
-                        CollectInventoryRecursive(carried[i], result, visited, 0);
-                    }
-                }
-            }
+        private static NativeInventoryList GetCarriedList(CharacterData characterData)
+        {
+            try { return characterData.GetCarriedInventoryList(); }
             catch (Exception ex)
             {
                 Plugin.LogOnce("collect-carried", ex);
+                return null;
             }
+        }
 
-            if (result.Count == 0 && characterData.inventoryData != null)
+        private static void CollectCarriedInventories(
+            NativeInventoryList carried,
+            CharacterData characterData,
+            List<InventoryData> result,
+            HashSet<IntPtr> visited)
+        {
+            if (carried != null)
             {
-                CollectInventoryRecursive(characterData.inventoryData, result, visited, 0);
+                for (int i = 0, count = carried.Count; i < count; i++)
+                    CollectInventoryRecursive(carried[i], result, visited, 0);
             }
 
-            return result;
+            if (result.Count == 0)
+                CollectInventoryRecursive(characterData.inventoryData, result, visited, 0);
         }
 
         private static void CollectInventoryRecursive(
@@ -65,24 +88,94 @@ namespace ZedZone.BetterReload
             var items = inv.itemList;
             if (items == null) return;
 
-            for (int i = 0; i < items.Count; i++)
+            for (int i = 0, count = items.Count; i < count; i++)
             {
-                var item = items[i];
-                if (item != null && item.inventoryData != null)
-                {
-                    CollectInventoryRecursive(item.inventoryData, result, visited, depth + 1);
-                }
+                var child = items[i]?.inventoryData;
+                if (child != null)
+                    CollectInventoryRecursive(child, result, visited, depth + 1);
             }
+        }
+
+        private static InventoryScratch RentScratch()
+        {
+            var scratch = _scratch ??= new InventoryScratch();
+            // 库存查询可能被其他补丁重入，内层调用不能清空外层正在用的集合。
+            if (scratch.InUse)
+                return new InventoryScratch();
+            scratch.InUse = true;
+            return scratch;
+        }
+
+        private static void ReturnScratch(InventoryScratch scratch)
+        {
+            scratch.Inventories.Clear();
+            scratch.Visited.Clear();
+            scratch.Seen.Clear();
+            scratch.InUse = false;
+        }
+
+        internal static void ClearMetadataCache()
+        {
+            _ammoIdCache.Clear();
+            _magazineIdCache.Clear();
+            _magFitCache.Clear();
+        }
+
+        private static ItemManager GetItemManager()
+        {
+            var itemMgr = ItemManager.instance;
+            IntPtr ptr = Key(itemMgr);
+            if (ptr != _itemManagerPtr)
+            {
+                ClearMetadataCache();
+                _itemManagerPtr = ptr;
+            }
+            return itemMgr;
         }
 
         internal static bool IsAmmoItemId(int itemId)
         {
             if (itemId <= 0) return false;
-            var itemMgr = ItemManager.instance;
+            var itemMgr = GetItemManager();
             if (itemMgr == null) return false;
 
-            var attr = itemMgr.GetItemAttrById(itemId);
-            return attr != null && attr.itemType == ItemType.Ammo;
+            if (!_ammoIdCache.TryGetValue(itemId, out bool isAmmo))
+            {
+                var attr = itemMgr.GetItemAttrById(itemId);
+                isAmmo = attr != null && attr.itemType == ItemType.Ammo;
+                _ammoIdCache[itemId] = isAmmo;
+            }
+            return isAmmo;
+        }
+
+        private static bool HasNestedInventory(InventoryData inventory)
+        {
+            var items = inventory?.itemList;
+            if (items == null) return false;
+
+            for (int i = 0, count = items.Count; i < count; i++)
+            {
+                if (items[i]?.inventoryData != null)
+                    return true;
+            }
+            return false;
+        }
+
+        private static bool HasNestedInventory(NativeInventoryList carried, CharacterData characterData)
+        {
+            bool hasCarried = false;
+            if (carried != null)
+            {
+                for (int i = 0, count = carried.Count; i < count; i++)
+                {
+                    var inventory = carried[i];
+                    if (inventory == null) continue;
+                    hasCarried = true;
+                    if (HasNestedInventory(inventory))
+                        return true;
+                }
+            }
+            return !hasCarried && HasNestedInventory(characterData.inventoryData);
         }
 
         /// <summary>
@@ -93,39 +186,51 @@ namespace ZedZone.BetterReload
             int itemId,
             Il2CppSystem.Collections.Generic.List<ItemData> result)
         {
-            if (characterData == null || result == null || !IsAmmoItemId(itemId))
+            if (!IsAmmoItemId(itemId) || characterData == null || result == null)
                 return 0;
 
-            var seen = new HashSet<IntPtr>();
-            for (int i = 0; i < result.Count; i++)
-            {
-                IntPtr ptr = Key(result[i]);
-                if (ptr != IntPtr.Zero) seen.Add(ptr);
-            }
+            var carried = GetCarriedList(characterData);
+            // 普通背包的散弹已由原版统计；没有子容器时无需收集库存或给结果去重。
+            if (!HasNestedInventory(carried, characterData)) return 0;
 
-            int added = 0;
-            var inventories = CollectCarriedInventories(characterData);
-            for (int i = 0; i < inventories.Count; i++)
+            var scratch = RentScratch();
+            try
             {
-                var items = inventories[i].itemList;
-                if (items == null) continue;
-
-                for (int j = 0; j < items.Count; j++)
+                for (int i = 0, count = result.Count; i < count; i++)
                 {
-                    var item = items[j];
-                    if (item == null || item.itemId != itemId || item.itemNumberFloat <= 0f)
-                        continue;
+                    IntPtr ptr = Key(result[i]);
+                    if (ptr != IntPtr.Zero) scratch.Seen.Add(ptr);
+                }
 
-                    IntPtr ptr = Key(item);
-                    if (ptr != IntPtr.Zero && seen.Add(ptr))
+                int added = 0;
+                var inventories = scratch.Inventories;
+                CollectCarriedInventories(carried, characterData, inventories, scratch.Visited);
+                for (int i = 0; i < inventories.Count; i++)
+                {
+                    var items = inventories[i].itemList;
+                    if (items == null) continue;
+
+                    for (int j = 0, count = items.Count; j < count; j++)
                     {
-                        result.Add(item);
-                        added++;
+                        var item = items[j];
+                        if (item == null || item.itemId != itemId || item.itemNumberFloat <= 0f)
+                            continue;
+
+                        IntPtr ptr = Key(item);
+                        if (ptr != IntPtr.Zero && scratch.Seen.Add(ptr))
+                        {
+                            result.Add(item);
+                            added++;
+                        }
                     }
                 }
-            }
 
-            return added;
+                return added;
+            }
+            finally
+            {
+                ReturnScratch(scratch);
+            }
         }
 
         /// <summary>
@@ -189,41 +294,71 @@ namespace ZedZone.BetterReload
         /// </summary>
         internal static int CountCompatibleMagazineAmmo(BasicCharacterController character, ItemAttr_RangedWeapon weaponAttr)
         {
-            if (character == null || character.characterData == null || weaponAttr == null)
+            if (weaponAttr == null || weaponAttr.feedingType != ItemAttr_RangedWeapon.FeedingType.Magazine ||
+                character == null)
                 return 0;
 
-            var itemMgr = ItemManager.instance;
-            if (itemMgr == null) return 0;
+            var characterData = character.characterData;
+            var itemMgr = GetItemManager();
+            if (characterData == null || itemMgr == null) return 0;
 
-            int total = 0;
-            var seen = new HashSet<IntPtr>();
-            var inventories = CollectCarriedInventories(character.characterData);
-            for (int i = 0; i < inventories.Count; i++)
+            var scratch = RentScratch();
+            try
             {
-                var items = inventories[i]?.itemList;
-                if (items == null) continue;
-
-                for (int j = 0; j < items.Count; j++)
+                int total = 0;
+                IntPtr weaponAttrPtr = weaponAttr.Pointer;
+                var inventories = scratch.Inventories;
+                CollectCarriedInventories(GetCarriedList(characterData), characterData, inventories, scratch.Visited);
+                for (int i = 0; i < inventories.Count; i++)
                 {
-                    var item = items[j];
-                    if (item == null) continue;
+                    var items = inventories[i].itemList;
+                    if (items == null) continue;
 
-                    IntPtr ptr = Key(item);
-                    if (ptr == IntPtr.Zero || !seen.Add(ptr)) continue;
+                    for (int j = 0, count = items.Count; j < count; j++)
+                    {
+                        var item = items[j];
+                        if (item == null || !IsCompatibleMagazine(itemMgr, item.itemId, weaponAttr, weaponAttrPtr))
+                            continue;
 
-                    var attr = itemMgr.GetItemAttrById(item.itemId);
-                    if (attr == null || attr.itemType != ItemType.Magazine) continue;
+                        IntPtr ptr = Key(item);
+                        if (ptr == IntPtr.Zero || !scratch.Seen.Add(ptr)) continue;
 
-                    var magAttr = attr.TryCast<ItemAttr_Magazine>();
-                    if (magAttr == null || !magAttr.IsMagazineFit(weaponAttr)) continue;
-
-                    int loaded = ItemData.GetMagazineAmmoNumber(item);
-                    if (loaded > 0)
-                        total += loaded;
+                        int loaded = ItemData.GetMagazineAmmoNumber(item);
+                        if (loaded > 0)
+                            total += loaded;
+                    }
                 }
-            }
 
-            return total;
+                return total;
+            }
+            finally
+            {
+                ReturnScratch(scratch);
+            }
+        }
+
+        private static bool IsCompatibleMagazine(
+            ItemManager itemMgr, int itemId, ItemAttr_RangedWeapon weaponAttr, IntPtr weaponAttrPtr)
+        {
+            ItemAttr attr = null;
+            if (!_magazineIdCache.TryGetValue(itemId, out bool isMagazine))
+            {
+                attr = itemMgr.GetItemAttrById(itemId);
+                isMagazine = attr != null && attr.itemType == ItemType.Magazine;
+                _magazineIdCache[itemId] = isMagazine;
+            }
+            if (!isMagazine) return false;
+
+            var key = (itemId, weaponAttrPtr);
+            if (!_magFitCache.TryGetValue(key, out bool fits))
+            {
+                var magazineAttr = (attr ?? itemMgr.GetItemAttrById(itemId))?.TryCast<ItemAttr_Magazine>();
+                fits = magazineAttr != null && magazineAttr.IsMagazineFit(weaponAttr);
+                if (_magFitCache.Count >= MaxMagazineFits)
+                    _magFitCache.Clear();
+                _magFitCache[key] = fits;
+            }
+            return fits;
         }
 
         /// <summary>

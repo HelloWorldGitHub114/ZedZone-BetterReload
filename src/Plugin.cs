@@ -25,7 +25,7 @@ namespace ZedZone.BetterReload
     {
         public const string PluginGuid = "zedzone.betterreload";
         public const string PluginName = "Better Reload";
-        public const string PluginVersion = "1.1.0";
+        public const string PluginVersion = "1.1.1";
 
         internal static ManualLogSource Logs;
 
@@ -113,6 +113,10 @@ namespace ZedZone.BetterReload
                 typeof(Patch_BasicCharacterController_FindOwnerInventoryData_Nested),
                 typeof(Patch_BasicCharacterController_IsCharacterOwnedInventory_Nested),
                 typeof(Patch_HumanCharacterController_OnMouseDown_AutoReload),
+                typeof(Patch_RangedWeaponInfoPanel_SyncBulletIconsAfterFire),
+                typeof(Patch_RangedWeaponInfoPanel_Refresh),
+                typeof(Patch_RangedWeaponInfoPanel_OnReloadFinished),
+                typeof(Patch_GameController_ReloadItemRegistry),
                 typeof(Patch_RangedWeaponInfoPanel_RefreshInventoryBullet),
             };
 

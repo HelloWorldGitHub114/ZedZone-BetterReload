@@ -41,6 +41,7 @@ namespace ZedZone.BetterReload
 
         private static void ResetAll()
         {
+            Patch_RangedWeaponInfoPanel_RefreshInventoryBullet.Invalidate();
             ResetSession();
             ResetAutoReload();
             _trackedWeaponPtr = IntPtr.Zero;
@@ -440,6 +441,7 @@ namespace ZedZone.BetterReload
             var character = cad?.character;
             if (character == null || !character.isPlayer) return;
 
+            Patch_RangedWeaponInfoPanel_RefreshInventoryBullet.Invalidate();
             NestedAmmoHelper.CleanEmptyAmmoInAllCarried(character.characterData);
 
             if (_ourSessionActive && Plugin.AutoContinue.Value)
@@ -451,6 +453,11 @@ namespace ZedZone.BetterReload
             {
                 _ourSessionActive = false;
             }
+
+            // 散弹转入弹匣后立即重算，无论动作是快捷键发起还是手动发起。
+            var panel = RangedWeaponInfoPanel._instance;
+            if (panel != null && panel.isActiveAndEnabled)
+                panel.RefreshInventoryBullet();
         }
 
         internal static void OnCancelPlayerActionPrefix()

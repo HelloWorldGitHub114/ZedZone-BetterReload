@@ -1,6 +1,8 @@
 using System;
+using System.Globalization;
 using HarmonyLib;
 using UnityEngine;
+using UnityEngine.UI;
 
 namespace ZedZone.BetterReload
 {
@@ -243,74 +245,273 @@ namespace ZedZone.BetterReload
         }
     }
 
-    /// <summary>
-    /// 修正右下角 HUD 备弹数量只统计散弹不计入备用弹匣内子弹的问题。
-    /// </summary>
+    [HarmonyPatch(typeof(RangedWeaponInfoPanel), nameof(RangedWeaponInfoPanel.SyncBulletIconsAfterFire))]
+    internal static class Patch_RangedWeaponInfoPanel_SyncBulletIconsAfterFire
+    {
+        [ThreadStatic]
+        private static (int Depth, IntPtr Panel) _scope;
+
+        internal static bool IsSyncing(RangedWeaponInfoPanel panel)
+        {
+            return _scope.Depth > 0 && _scope.Panel == NestedAmmoHelper.Key(panel);
+        }
+
+        [HarmonyPrefix]
+        private static void Prefix(RangedWeaponInfoPanel __instance, out (int, IntPtr) __state)
+        {
+            __state = _scope;
+            _scope = (_scope.Depth + 1, NestedAmmoHelper.Key(__instance));
+        }
+
+        [HarmonyPostfix]
+        private static void Postfix((int, IntPtr) __state)
+        {
+            _scope = __state;
+        }
+
+        // 原方法或其他补丁抛异常时也退出开火范围，避免后续正常刷新误走缓存。
+        [HarmonyFinalizer]
+        private static void Finalizer((int, IntPtr) __state)
+        {
+            _scope = __state;
+        }
+    }
+
+    [HarmonyPatch(typeof(RangedWeaponInfoPanel), nameof(RangedWeaponInfoPanel.Refresh))]
+    internal static class Patch_RangedWeaponInfoPanel_Refresh
+    {
+        [HarmonyPrefix]
+        private static void Prefix()
+        {
+            Patch_RangedWeaponInfoPanel_RefreshInventoryBullet.Invalidate();
+        }
+    }
+
+    [HarmonyPatch(typeof(RangedWeaponInfoPanel), nameof(RangedWeaponInfoPanel.OnReloadFinished))]
+    internal static class Patch_RangedWeaponInfoPanel_OnReloadFinished
+    {
+        [HarmonyPrefix]
+        private static void Prefix()
+        {
+            Patch_RangedWeaponInfoPanel_RefreshInventoryBullet.Invalidate();
+        }
+    }
+
+    [HarmonyPatch(typeof(GameController), nameof(GameController.ReloadItemRegistry))]
+    internal static class Patch_GameController_ReloadItemRegistry
+    {
+        [HarmonyPrefix]
+        private static void Prefix()
+        {
+            ClearCaches();
+        }
+
+        [HarmonyFinalizer]
+        private static void Finalizer()
+        {
+            ClearCaches();
+        }
+
+        private static void ClearCaches()
+        {
+            // 热重载会重建物品定义，也可能继续使用同一个 ItemManager。
+            NestedAmmoHelper.ClearMetadataCache();
+            Patch_RangedWeaponInfoPanel_RefreshInventoryBullet.Invalidate();
+        }
+    }
+
     [HarmonyPatch(typeof(RangedWeaponInfoPanel), nameof(RangedWeaponInfoPanel.RefreshInventoryBullet))]
     internal static class Patch_RangedWeaponInfoPanel_RefreshInventoryBullet
     {
-        [HarmonyPostfix]
-        private static void Postfix(RangedWeaponInfoPanel __instance)
+        private const float MaxReserveAge = 1f;
+
+        // 指针只用于比较当前对象身份，缓存不持有 IL2CPP 对象。
+        private readonly record struct ReserveKey(
+            IntPtr Panel, IntPtr Text, IntPtr Character, IntPtr CharacterData, IntPtr Weapon,
+            IntPtr WeaponData, IntPtr WeaponAttr, IntPtr ItemManager, bool IncludeMagAmmo,
+            bool NestedAmmoFallback, HudReserveAmmoStyle Style);
+
+        private static ReserveKey _reserveKey;
+        private static float _reserveTime;
+        private static string _reserveText;
+        private static string _renderedText;
+        private static int _overflowTextId;
+        private static HorizontalWrapMode _originalOverflow;
+
+        internal static void Invalidate()
         {
-            if (Plugin.IncludeMagazineAmmoInHud == null || !Plugin.IncludeMagazineAmmoInHud.Value)
-                return;
+            _reserveKey = default;
+            _reserveText = null;
+            _renderedText = null;
+        }
+
+        [HarmonyPrefix]
+        [HarmonyPriority(Priority.Last)]
+        private static bool Prefix(RangedWeaponInfoPanel __instance, bool __runOriginal)
+        {
+            if (!__runOriginal || _reserveText == null ||
+                !Patch_RangedWeaponInfoPanel_SyncBulletIconsAfterFire.IsSyncing(__instance))
+                return true;
 
             try
             {
-                if (__instance == null || __instance.weapon == null || __instance.gunAmmoText == null)
-                    return;
+                float age = Time.unscaledTime - _reserveTime;
+                if (age < 0f || age > MaxReserveAge ||
+                    !TryGetState(__instance, out var state) || state.Key != _reserveKey)
+                    return true;
 
-                var weapon = __instance.weapon;
-                var attr = weapon.weaponAttr;
-                if (attr == null || weapon.character == null || weapon.weaponData == null)
-                    return;
-
-                // 跳过弓箭、弩、能量与液体武器（它们不走 gunAmmoText 弹匣体系）
-                var wt = attr.weaponType;
-                if (wt == RangedWeaponType.Bow ||
-                    wt == RangedWeaponType.Crossbow ||
-                    wt == RangedWeaponType.EnergyWeapon ||
-                    wt == RangedWeaponType.LiquidWeapon)
-                    return;
-
-                int magAmmo = NestedAmmoHelper.CountCompatibleMagazineAmmo(weapon.character, attr);
-                if (magAmmo <= 0)
-                    return;
-
-                int looseAmmo = BasicRangedWeapon.GetInventoryAmmoTotal(
-                    weapon.character,
-                    weapon.weaponData,
-                    weapon.assignArrowId);
-
-                var style = Plugin.HudMagazineAmmoStyle != null
-                    ? Plugin.HudMagazineAmmoStyle.Value
-                    : HudReserveAmmoStyle.Combined;
-
-                string reserveText;
-                if (style == HudReserveAmmoStyle.Split)
+                string current = state.Text.text;
+                // 其他模组可能接管了这段文本，交给正常刷新链路处理。
+                if (current != _renderedText)
                 {
-                    reserveText = $"{looseAmmo}+{magAmmo}";
-                    __instance.gunAmmoText.horizontalOverflow = HorizontalWrapMode.Overflow;
+                    Invalidate();
+                    return true;
+                }
+
+                // 开火只改枪内弹量，背包备弹由库存事件和原版轮询独立刷新。
+                string desired = __instance.ShowLoadedAmmoInText()
+                    ? $"{BasicRangedWeapon.GetLoadedAmmo(state.WeaponData)}/{_reserveText}"
+                    : _reserveText;
+                if (current != desired)
+                    state.Text.text = desired;
+                _renderedText = desired;
+                return false;
+            }
+            catch (Exception ex)
+            {
+                Invalidate();
+                Plugin.LogOnce("hud-fire-ammo", ex);
+                return true;
+            }
+        }
+
+        [HarmonyPostfix]
+        [HarmonyPriority(Priority.First)]
+        private static void Postfix(RangedWeaponInfoPanel __instance, bool __runOriginal)
+        {
+            // HarmonyX 跳过原方法时仍会执行后缀，此时文本已经是最终值。
+            if (!__runOriginal) return;
+            Invalidate();
+
+            try
+            {
+                if (!TryGetState(__instance, out var state))
+                {
+                    if (__instance != null)
+                        RestoreOverflow(__instance.gunAmmoText);
+                    return;
+                }
+
+                // 先读取原版刚写入的散弹数，省去重复的库存查询，并给其他 HUD 后缀留出覆盖机会。
+                var text = state.Text;
+                string vanilla = text.text;
+                if (!TryParseLooseAmmo(vanilla, out int separator, out int looseAmmo))
+                {
+                    RestoreOverflow(text);
+                    return;
+                }
+
+                int magAmmo = state.Key.IncludeMagAmmo && state.Attr.feedingType == ItemAttr_RangedWeapon.FeedingType.Magazine
+                    ? NestedAmmoHelper.CountCompatibleMagazineAmmo(state.Character, state.Attr)
+                    : 0;
+                bool split = magAmmo > 0 && state.Key.Style == HudReserveAmmoStyle.Split;
+                UpdateOverflow(text, split);
+
+                string reserve;
+                string desired = vanilla;
+                if (magAmmo > 0)
+                {
+                    reserve = split ? $"{looseAmmo}+{magAmmo}" : ((long)looseAmmo + magAmmo).ToString();
+                    desired = separator < 0 ? reserve : string.Concat(vanilla.AsSpan(0, separator + 1), reserve.AsSpan());
+                    if (vanilla != desired)
+                        text.text = desired;
                 }
                 else
                 {
-                    reserveText = (looseAmmo + magAmmo).ToString();
+                    reserve = separator < 0 ? vanilla : vanilla.Substring(separator + 1);
                 }
 
-                if (__instance.ShowLoadedAmmoInText())
-                {
-                    int loaded = BasicRangedWeapon.GetLoadedAmmo(weapon.weaponData);
-                    __instance.gunAmmoText.text = $"{loaded}/{reserveText}";
-                }
-                else
-                {
-                    __instance.gunAmmoText.text = reserveText;
-                }
+                _reserveKey = state.Key;
+                _reserveTime = Time.unscaledTime;
+                _reserveText = reserve;
+                _renderedText = desired;
             }
             catch (Exception ex)
             {
                 Plugin.LogOnce("hud-mag-ammo", ex);
             }
+        }
+
+        private static bool TryGetState(
+            RangedWeaponInfoPanel panel,
+            out (Text Text, BasicCharacterController Character, ItemData WeaponData, ItemAttr_RangedWeapon Attr, ReserveKey Key) state)
+        {
+            state = default;
+            if (panel == null) return false;
+            var text = panel.gunAmmoText;
+            var weapon = panel.weapon;
+            if (text == null || weapon == null) return false;
+
+            var attr = weapon.weaponAttr;
+            if (attr == null ||
+                (attr.weaponType is not (RangedWeaponType.ShotGun or RangedWeaponType.Pistol or
+                    RangedWeaponType.Rifle or RangedWeaponType.Revolver)) ||
+                (attr.feedingType is not (ItemAttr_RangedWeapon.FeedingType.Magazine or
+                    ItemAttr_RangedWeapon.FeedingType.BuiltIn)))
+                return false;
+
+            var character = weapon.character;
+            var weaponData = weapon.weaponData;
+            if (character == null || weaponData == null) return false;
+            var characterData = character.characterData;
+            if (characterData == null || characterData.deadFlag || character.netDeadFlag) return false;
+
+            var game = GameController.instance;
+            if (game != null && game.weaponTestMode) return false;
+
+            var key = new ReserveKey(panel.Pointer, text.Pointer, character.Pointer, characterData.Pointer,
+                weapon.Pointer, weaponData.Pointer, attr.Pointer, NestedAmmoHelper.Key(ItemManager.instance),
+                Plugin.IncludeMagazineAmmoInHud.Value, Plugin.EnableNestedAmmoFallback.Value, Plugin.HudMagazineAmmoStyle.Value);
+            state = (text, character, weaponData, attr, key);
+            return true;
+        }
+
+        private static bool TryParseLooseAmmo(string text, out int separator, out int looseAmmo)
+        {
+            separator = text?.IndexOf('/') ?? -1;
+            looseAmmo = 0;
+            if (string.IsNullOrEmpty(text)) return false;
+            if (separator >= 0 && !int.TryParse(text.AsSpan(0, separator), NumberStyles.None, CultureInfo.InvariantCulture, out _))
+                return false;
+
+            return int.TryParse(text.AsSpan(separator + 1), NumberStyles.None, CultureInfo.InvariantCulture, out looseAmmo);
+        }
+
+        private static void UpdateOverflow(Text text, bool split)
+        {
+            if (!split)
+            {
+                RestoreOverflow(text);
+                return;
+            }
+
+            var current = text.horizontalOverflow;
+            if (current == HorizontalWrapMode.Overflow) return;
+
+            // 只记录本模组实际改动的组件，切回合并时恢复它原有的换行方式。
+            text.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _overflowTextId = text.GetInstanceID();
+            _originalOverflow = current;
+        }
+
+        private static void RestoreOverflow(Text text)
+        {
+            if (_overflowTextId == 0 || text == null || _overflowTextId != text.GetInstanceID())
+                return;
+
+            if (text.horizontalOverflow == HorizontalWrapMode.Overflow)
+                text.horizontalOverflow = _originalOverflow;
+            _overflowTextId = 0;
         }
     }
 }
