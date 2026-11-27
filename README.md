@@ -72,12 +72,12 @@ BepInEx\config\zedzone.betterreload.cfg
 
 > **如果按 `Alt + R` 无反应（常见显卡热键冲突）**：部分开启了游戏内覆盖层的 N 卡（NVIDIA App / GeForce Experience）或 A 卡（AMD Software）用户，显卡驱动默认会将 `Alt + R` 占为全局性能监控热键并拦截按键，任选其一即可解决：
 > 1. **关闭显卡 `Alt + R` 热键**（推荐继续用 `Alt + R`）：N 卡按 `Alt + Z → 设置 → 键盘快捷键 → 性能`，关闭或修改 `Alt + R`（A 卡在 AMD 覆盖层快捷键中同理关闭或改键）。
-> 2. **在配置文件中自定义按键**（支持纯单键或任意组合键，推荐改成原版未占用的单键 `N` 或鼠标侧键 `Mouse3` / `Mouse4`）：打开 `BepInEx\config\zedzone.betterreload.cfg`，在 `[Hotkey]` 节修改后保存并重启游戏：
+> 2. **游戏内可视化改键（最省事）**：安装 [Zedtool - Mod Settings](https://steamcommunity.com/sharedfiles/filedetails/?id=3838476805)，进游戏按 `F7` 打开设置面板即可直接修改本模组全部按键与开关并即时生效（按 `Delete` 可将 `ModifierKey` 清空为 `None` 改成纯单键）。
+> 3. **手动在配置文件中改键**（支持纯单键或任意组合键，推荐改成原版未占用的单键 `N` 或鼠标侧键 `Mouse3` / `Mouse4`）：打开 `BepInEx\config\zedzone.betterreload.cfg`，在 `[Hotkey]` 节修改后保存并重启游戏：
 > ```ini
 > TriggerKey = N        # 或 Mouse3 / Mouse4（对应鼠标两个侧键）
 > ModifierKey = None    # 设为 None 即纯单键触发；也可填入其它修饰键组合
 > ```
-> 此外，本模组使用标准 BepInEx `Config.Bind` 注册配置，若已安装 BepInEx 配置界面类模组（如 ConfigurationManager），也可直接在游戏内可视化修改全部选项。
 
 ---
 
